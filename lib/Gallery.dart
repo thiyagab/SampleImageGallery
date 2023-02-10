@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter_image_slideshow/flutter_image_slideshow.dart';
 import 'dart:html' as html;
 import 'dart:io' as io;
 import 'package:image_picker_web/image_picker_web.dart';
@@ -18,12 +19,12 @@ class GalleryPage extends StatefulWidget {
 
 class _GalleryPageState extends State<GalleryPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = new GlobalKey<ScaffoldState>();
-  Uint8List? _image;
+  List<Uint8List>? _images;
   String title = 'Image Gallery';
   String description = '';
   final FirebaseDatabase _database = FirebaseDatabase.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
-  List<String> _imageUrls = [];
+  List _imageUrls = [];
   List<String> descriptions = [];
   double? width;
   double? height;
@@ -32,10 +33,10 @@ class _GalleryPageState extends State<GalleryPage> {
   _GalleryPageState(this.uid);
 
   Future getImage(StateSetter bottomState) async {
-    var image = await ImagePickerWeb.getImageAsBytes();
+    List<Uint8List>? images = await ImagePickerWeb.getMultiImagesAsBytes();
 
     bottomState(() {
-      _image = image;
+      _images = images;
     });
   }
 
@@ -59,20 +60,29 @@ class _GalleryPageState extends State<GalleryPage> {
   }
 
   void _uploadImage() async {
-    if (_image == null) return;
+    if (_images == null || _images!.isEmpty) return;
     setState(() {
       title = 'Uploading...';
     });
-    String fileName = DateTime.now().millisecondsSinceEpoch.toString();
-    final fileRef = _storage.ref().child("$uid/$fileName");
-    UploadTask uploadTask = fileRef.putData(_image!);
-    await uploadTask.whenComplete(() => null);
+    List<String> imageurls = [];
+    int count = 1;
+    await Future.forEach(_images!.toList(), (Uint8List _image) async {
+      String fileName = DateTime.now().millisecondsSinceEpoch.toString();
+      final fileRef = _storage.ref().child("$uid/$fileName");
+      UploadTask uploadTask = fileRef.putData(_image!);
+      await uploadTask.whenComplete(() => null);
 
-    // uploadTask.whenComplete(() => null)
-    String imageUrl = await fileRef.getDownloadURL();
+      // uploadTask.whenComplete(() => null)b
+      String imageUrl = await fileRef.getDownloadURL();
+      imageurls.add(imageUrl);
+      count += 1;
+      setState(() {
+        title = 'Uploading...$count';
+      });
+    });
 
     _database.ref().child(uid).push().set({
-      "url": imageUrl,
+      "url": imageurls.length == 1 ? imageurls[0] : imageurls,
       "description": description == null ? '' : description,
     });
 
@@ -107,17 +117,12 @@ class _GalleryPageState extends State<GalleryPage> {
                 ),
                 itemBuilder: (context, index) {
                   return InkWell(
-                      onTap: () {
-                        showDialog(
-                            context: context,
-                            builder: (_) => showDetails(
-                                _imageUrls[index], descriptions[index]));
-                      },
-                      child: Image.network(
-                        _imageUrls[index],
-                        fit: BoxFit.fitHeight,
-                        width: 100,
-                      ));
+                    onTap: () {
+                      showDialog(
+                          context: context, builder: (_) => showDetails(index));
+                    },
+                    child: showNetworkImages(index),
+                  );
                 },
                 itemCount: _imageUrls.length,
               ),
@@ -133,6 +138,56 @@ class _GalleryPageState extends State<GalleryPage> {
     );
   }
 
+  showNetworkImages(int index) {
+    if (_imageUrls[index].runtimeType == String) {
+      return Image.network(
+        _imageUrls[index],
+        fit: BoxFit.fitHeight,
+        width: 100,
+      );
+    } else if (_imageUrls[index].runtimeType == List) {
+      List newImageUrls = _imageUrls[index];
+      return ImageSlideshow(
+
+          /// Width of the [ImageSlideshow].
+          width: double.infinity,
+
+          /// Height of the [ImageSlideshow].
+          height: 200,
+
+          /// The page to show when first creating the [ImageSlideshow].
+          initialPage: 0,
+
+          /// The color to paint the indicator.
+          indicatorColor: Colors.blue,
+
+          /// The color to paint behind th indicator.
+          indicatorBackgroundColor: Colors.grey,
+
+          /// Called whenever the page in the center of the viewport changes.
+          onPageChanged: (value) {
+            print('Page changed: $value');
+          },
+
+          /// Auto scroll interval.
+          /// Do not auto scroll with null or 0.
+          autoPlayInterval: 3000,
+
+          /// Loops back to first slide.
+          isLoop: true,
+
+          /// The widgets to display in the [ImageSlideshow].
+          /// Add the sample image file into the images folder
+          children: newImageUrls!.map((_image) {
+            return Image.network(
+              _image!,
+              fit: BoxFit.fitHeight,
+              width: 100,
+            );
+          }).toList());
+    }
+  }
+
   showAddPicDialog(BuildContext context) {
     showModalBottomSheet(
         context: context,
@@ -143,13 +198,9 @@ class _GalleryPageState extends State<GalleryPage> {
                 child: Container(
                     padding: EdgeInsets.all(10),
                     child: Column(children: <Widget>[
-                      _image == null
+                      _images == null || _images!.isEmpty
                           ? Container()
-                          : Image.memory(
-                              _image!,
-                              fit: BoxFit.fitHeight,
-                              width: 100,
-                            ),
+                          : showImages(),
                       SizedBox(height: 10),
                       TextField(
                         minLines: 3,
@@ -183,19 +234,68 @@ class _GalleryPageState extends State<GalleryPage> {
         });
   }
 
-  showDetails(String imageUrl, String description) {
+  Widget showImages() {
+    if (_images!.isNotEmpty && _images!.length == 1) {
+      return Image.memory(
+        _images![0],
+        fit: BoxFit.fitHeight,
+        width: 100,
+      );
+    } else {
+      return ImageSlideshow(
+
+          /// Width of the [ImageSlideshow].
+          width: double.infinity,
+
+          /// Height of the [ImageSlideshow].
+          height: 200,
+
+          /// The page to show when first creating the [ImageSlideshow].
+          initialPage: 0,
+
+          /// The color to paint the indicator.
+          indicatorColor: Colors.blue,
+
+          /// The color to paint behind th indicator.
+          indicatorBackgroundColor: Colors.grey,
+
+          /// Called whenever the page in the center of the viewport changes.
+          onPageChanged: (value) {
+            print('Page changed: $value');
+          },
+
+          /// Auto scroll interval.
+          /// Do not auto scroll with null or 0.
+          autoPlayInterval: 3000,
+
+          /// Loops back to first slide.
+          isLoop: true,
+
+          /// The widgets to display in the [ImageSlideshow].
+          /// Add the sample image file into the images folder
+          children: imageSlides());
+    }
+  }
+
+  List<Widget> imageSlides() {
+    return _images!.map((_image) {
+      return Image.memory(
+        _image!,
+        fit: BoxFit.fitHeight,
+        width: 100,
+      );
+    }).toList();
+  }
+
+  showDetails(int index) {
     return Dialog(
         child: SingleChildScrollView(
             child: Column(children: [
-      Image.network(
-        imageUrl,
-        fit: BoxFit.fitHeight,
-        width: 300,
-      ),
+      showNetworkImages(index),
       SizedBox(
         height: 20,
       ),
-      Text(description),
+      Text(descriptions[index]),
       SizedBox(
         height: 10,
       )

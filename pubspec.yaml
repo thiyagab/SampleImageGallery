@@ -41,6 +41,7 @@ dependencies:
   firebase_database:
   image_picker_web:
   firebase_ui_auth: ^1.1.9
+  flutter_image_slideshow: any
 
 dev_dependencies:
   flutter_test:
