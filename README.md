@@ -1,4 +1,4 @@
-# sampleimagegallery
+# A sample personal image gallery in flutter with firebase integration
 
 A sample Flutter project to showcase,
 
@@ -8,6 +8,5 @@ A sample Flutter project to showcase,
 4. Firebase database
 5. Security rules
 
-## Getting Started
 
 
