@@ -185,7 +185,8 @@ class _GalleryPageState extends State<GalleryPage> {
 
   showDetails(String imageUrl, String description) {
     return Dialog(
-        child: Column(children: [
+        child: SingleChildScrollView(
+            child: Column(children: [
       Image.network(
         imageUrl,
         fit: BoxFit.fitHeight,
@@ -194,7 +195,10 @@ class _GalleryPageState extends State<GalleryPage> {
       SizedBox(
         height: 20,
       ),
-      Text(description)
-    ]));
+      Text(description),
+      SizedBox(
+        height: 10,
+      )
+    ])));
   }
 }
