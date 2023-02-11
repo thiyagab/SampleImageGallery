@@ -1,11 +1,8 @@
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_image_slideshow/flutter_image_slideshow.dart';
-import 'dart:html' as html;
-import 'dart:io' as io;
 import 'package:image_picker_web/image_picker_web.dart';
 
 class GalleryPage extends StatefulWidget {
@@ -19,7 +16,7 @@ class GalleryPage extends StatefulWidget {
 
 class _GalleryPageState extends State<GalleryPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = new GlobalKey<ScaffoldState>();
-  List<Uint8List>? _images;
+  List<Uint8List>? _localimages;
   String title = 'Image Gallery';
   String description = '';
   final FirebaseDatabase _database = FirebaseDatabase.instance;
@@ -36,7 +33,7 @@ class _GalleryPageState extends State<GalleryPage> {
     List<Uint8List>? images = await ImagePickerWeb.getMultiImagesAsBytes();
 
     bottomState(() {
-      _images = images;
+      _localimages = images;
     });
   }
 
@@ -60,34 +57,32 @@ class _GalleryPageState extends State<GalleryPage> {
   }
 
   void _uploadImage() async {
-    if (_images == null || _images!.isEmpty) return;
+    if (_localimages == null || _localimages!.isEmpty) return;
     setState(() {
       title = 'Uploading...';
     });
     List<String> imageurls = [];
     int count = 1;
-    await Future.forEach(_images!.toList(), (Uint8List _image) async {
+    await Future.forEach(_localimages!.toList(), (Uint8List _image) async {
       String fileName = DateTime.now().millisecondsSinceEpoch.toString();
       final fileRef = _storage.ref().child("$uid/$fileName");
       UploadTask uploadTask = fileRef.putData(_image!);
       await uploadTask.whenComplete(() => null);
-
-      // uploadTask.whenComplete(() => null)b
       String imageUrl = await fileRef.getDownloadURL();
       imageurls.add(imageUrl);
       count += 1;
       setState(() {
-        title = 'Uploading...$count';
+        title = 'Uploading Image $count';
       });
     });
 
     _database.ref().child(uid).push().set({
       "url": imageurls.length == 1 ? imageurls[0] : imageurls,
-      "description": description == null ? '' : description,
+      "description": description ?? '',
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text("Image uploaded successfully"),
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text("Image(s) uploaded successfully"),
     ));
     setState(() {
       title = 'Image Gallery';
@@ -103,33 +98,7 @@ class _GalleryPageState extends State<GalleryPage> {
       appBar: AppBar(
         title: Text(title),
       ),
-      body: Padding(
-        padding: EdgeInsets.all(30),
-        child: Column(
-          children: <Widget>[
-            Expanded(
-              child: GridView.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: (width! > height! && width! > 600) ? 6 : 2,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 1,
-                ),
-                itemBuilder: (context, index) {
-                  return InkWell(
-                    onTap: () {
-                      showDialog(
-                          context: context, builder: (_) => showDetails(index));
-                    },
-                    child: showNetworkImages(index),
-                  );
-                },
-                itemCount: _imageUrls.length,
-              ),
-            ),
-          ],
-        ),
-      ),
+      body: body(),
       floatingActionButton: FloatingActionButton(
           onPressed: () {
             showAddPicDialog(context);
@@ -138,54 +107,28 @@ class _GalleryPageState extends State<GalleryPage> {
     );
   }
 
-  showNetworkImages(int index) {
-    if (_imageUrls[index].runtimeType == String) {
-      return Image.network(
-        _imageUrls[index],
-        fit: BoxFit.fitHeight,
-        width: 100,
-      );
-    } else if (_imageUrls[index].runtimeType == List) {
-      List newImageUrls = _imageUrls[index];
-      return ImageSlideshow(
-
-          /// Width of the [ImageSlideshow].
-          width: double.infinity,
-
-          /// Height of the [ImageSlideshow].
-          height: 200,
-
-          /// The page to show when first creating the [ImageSlideshow].
-          initialPage: 0,
-
-          /// The color to paint the indicator.
-          indicatorColor: Colors.blue,
-
-          /// The color to paint behind th indicator.
-          indicatorBackgroundColor: Colors.grey,
-
-          /// Called whenever the page in the center of the viewport changes.
-          onPageChanged: (value) {
-            print('Page changed: $value');
-          },
-
-          /// Auto scroll interval.
-          /// Do not auto scroll with null or 0.
-          autoPlayInterval: 3000,
-
-          /// Loops back to first slide.
-          isLoop: true,
-
-          /// The widgets to display in the [ImageSlideshow].
-          /// Add the sample image file into the images folder
-          children: newImageUrls!.map((_image) {
-            return Image.network(
-              _image!,
-              fit: BoxFit.fitHeight,
-              width: 100,
+  body() {
+    return Padding(
+        padding: EdgeInsets.all(30),
+        child: GridView.builder(
+          shrinkWrap: true,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: (width! > height! && width! > 600) ? 6 : 2,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1,
+          ),
+          itemBuilder: (context, index) {
+            return InkWell(
+              onTap: () {
+                showDialog(
+                    context: context, builder: (_) => showDetails(index));
+              },
+              child: showNetworkImages(index),
             );
-          }).toList());
-    }
+          },
+          itemCount: _imageUrls.length,
+        ));
   }
 
   showAddPicDialog(BuildContext context) {
@@ -196,16 +139,16 @@ class _GalleryPageState extends State<GalleryPage> {
               builder: (BuildContext context, StateSetter setState) {
             return SingleChildScrollView(
                 child: Container(
-                    padding: EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(10),
                     child: Column(children: <Widget>[
-                      _images == null || _images!.isEmpty
+                      _localimages == null || _localimages!.isEmpty
                           ? Container()
-                          : showImages(),
+                          : showLocalImages(),
                       SizedBox(height: 10),
                       TextField(
                         minLines: 3,
                         maxLines: 20,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: "Description",
                         ),
                         onChanged: (value) {
@@ -214,16 +157,16 @@ class _GalleryPageState extends State<GalleryPage> {
                           });
                         },
                       ),
-                      SizedBox(height: 10),
+                      const SizedBox(height: 10),
                       ElevatedButton(
-                        child: Text("Choose Image"),
+                        child: const Text("Choose Image"),
                         onPressed: () {
                           getImage(setState);
                         },
                       ),
                       SizedBox(height: 10),
                       ElevatedButton(
-                        child: Text("Upload Image"),
+                        child: const Text("Upload Image"),
                         onPressed: () {
                           Navigator.pop(context);
                           _uploadImage();
@@ -234,57 +177,49 @@ class _GalleryPageState extends State<GalleryPage> {
         });
   }
 
-  Widget showImages() {
-    if (_images!.isNotEmpty && _images!.length == 1) {
+  Widget showLocalImages() {
+    if (_localimages!.isNotEmpty && _localimages!.length == 1) {
       return Image.memory(
-        _images![0],
+        _localimages![0],
         fit: BoxFit.fitHeight,
         width: 100,
       );
     } else {
       return ImageSlideshow(
-
-          /// Width of the [ImageSlideshow].
-          width: double.infinity,
-
-          /// Height of the [ImageSlideshow].
-          height: 200,
-
-          /// The page to show when first creating the [ImageSlideshow].
-          initialPage: 0,
-
-          /// The color to paint the indicator.
           indicatorColor: Colors.blue,
-
-          /// The color to paint behind th indicator.
-          indicatorBackgroundColor: Colors.grey,
-
-          /// Called whenever the page in the center of the viewport changes.
-          onPageChanged: (value) {
-            print('Page changed: $value');
-          },
-
-          /// Auto scroll interval.
-          /// Do not auto scroll with null or 0.
           autoPlayInterval: 3000,
-
-          /// Loops back to first slide.
           isLoop: true,
-
-          /// The widgets to display in the [ImageSlideshow].
-          /// Add the sample image file into the images folder
-          children: imageSlides());
+          children: _localimages!.map((_image) {
+            return Image.memory(
+              _image!,
+              fit: BoxFit.fitHeight,
+              width: 100,
+            );
+          }).toList());
     }
   }
 
-  List<Widget> imageSlides() {
-    return _images!.map((_image) {
-      return Image.memory(
-        _image!,
+  showNetworkImages(int index) {
+    if (_imageUrls[index].runtimeType == String) {
+      return Image.network(
+        _imageUrls[index],
         fit: BoxFit.fitHeight,
         width: 100,
       );
-    }).toList();
+    } else {
+      List newImageUrls = _imageUrls[index];
+      return ImageSlideshow(
+          indicatorColor: Colors.blue,
+          autoPlayInterval: 3000,
+          isLoop: true,
+          children: newImageUrls!.map((image) {
+            return Image.network(
+              image!,
+              fit: BoxFit.fitHeight,
+              width: 100,
+            );
+          }).toList());
+    }
   }
 
   showDetails(int index) {
@@ -292,11 +227,11 @@ class _GalleryPageState extends State<GalleryPage> {
         child: SingleChildScrollView(
             child: Column(children: [
       showNetworkImages(index),
-      SizedBox(
+      const SizedBox(
         height: 20,
       ),
       Text(descriptions[index]),
-      SizedBox(
+      const SizedBox(
         height: 10,
       )
     ])));
