@@ -4,6 +4,9 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_image_slideshow/flutter_image_slideshow.dart';
 import 'package:image_picker_web/image_picker_web.dart';
+import 'package:image/image.dart' as Img;
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
 
 class GalleryPage extends StatefulWidget {
   String uid;
@@ -22,6 +25,7 @@ class _GalleryPageState extends State<GalleryPage> {
   final FirebaseDatabase _database = FirebaseDatabase.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
   List _imageUrls = [];
+  List thumbnails = [];
   List<String> descriptions = [];
   double? width;
   double? height;
@@ -49,6 +53,7 @@ class _GalleryPageState extends State<GalleryPage> {
           Map<dynamic, dynamic> images = event.snapshot.value as Map;
           images.forEach((key, value) {
             _imageUrls.add(value["url"]);
+            thumbnails.add(value['thumbnail'] ?? value["url"]);
             descriptions.add(value["description"]);
           });
         }
@@ -62,6 +67,7 @@ class _GalleryPageState extends State<GalleryPage> {
       title = 'Uploading...';
     });
     List<String> imageurls = [];
+    List<String> thumbnails = [];
     int count = 1;
     await Future.forEach(_localimages!.toList(), (Uint8List _image) async {
       String fileName = DateTime.now().millisecondsSinceEpoch.toString();
@@ -70,6 +76,15 @@ class _GalleryPageState extends State<GalleryPage> {
       await uploadTask.whenComplete(() => null);
       String imageUrl = await fileRef.getDownloadURL();
       imageurls.add(imageUrl);
+      //Resize and upload thumbnail, we can use firebase resize funciton if can enable billing
+      // switch to blaze plan
+      Uint8List thumbnail =
+          Img.encodeJpg(Img.copyResize(Img.decodeImage(_image)!, width: 100));
+      final resizedfileRef = _storage.ref().child("$uid/$fileName" + "_tb");
+      UploadTask resizeuploadTask = resizedfileRef.putData(thumbnail!);
+      await resizeuploadTask.whenComplete(() => null);
+      String thumbnailurl = await resizedfileRef.getDownloadURL();
+      thumbnails.add(thumbnailurl);
       count += 1;
       setState(() {
         title = 'Uploading Image $count';
@@ -78,6 +93,7 @@ class _GalleryPageState extends State<GalleryPage> {
 
     _database.ref().child(uid).push().set({
       "url": imageurls.length == 1 ? imageurls[0] : imageurls,
+      "thumbnail": thumbnails.length == 1 ? thumbnails[0] : thumbnails,
       "description": description ?? '',
     });
 
@@ -124,7 +140,7 @@ class _GalleryPageState extends State<GalleryPage> {
                 showDialog(
                     context: context, builder: (_) => showDetails(index));
               },
-              child: showNetworkImages(index),
+              child: showThumbNails(index),
             );
           },
           itemCount: _imageUrls.length,
@@ -182,7 +198,7 @@ class _GalleryPageState extends State<GalleryPage> {
       return Image.memory(
         _localimages![0],
         fit: BoxFit.fitHeight,
-        width: 100,
+        width: 300,
       );
     } else {
       return ImageSlideshow(
@@ -193,40 +209,70 @@ class _GalleryPageState extends State<GalleryPage> {
             return Image.memory(
               _image!,
               fit: BoxFit.fitHeight,
-              width: 100,
+              width: 300,
             );
           }).toList());
     }
   }
 
-  showNetworkImages(int index) {
+  showPhotoView(int index) {
     if (_imageUrls[index].runtimeType == String) {
-      return Image.network(
-        _imageUrls[index],
-        fit: BoxFit.fitHeight,
-        width: 100,
+      return PhotoView(
+        backgroundDecoration: const BoxDecoration(color: Colors.white70),
+        imageProvider: NetworkImage(_imageUrls[index]),
       );
     } else {
       List newImageUrls = _imageUrls[index];
+      return PhotoViewGallery.builder(
+          scrollPhysics: const BouncingScrollPhysics(),
+          itemCount: newImageUrls.length,
+          backgroundDecoration: const BoxDecoration(color: Colors.white70),
+          enableRotation: true,
+          gaplessPlayback: true,
+          allowImplicitScrolling: true,
+          builder: (BuildContext context, int index) {
+            return PhotoViewGalleryPageOptions(
+                initialScale: PhotoViewComputedScale.contained * 0.5,
+                maxScale: PhotoViewComputedScale.covered * 1.1,
+                imageProvider: NetworkImage(newImageUrls[index]));
+          });
+    }
+  }
+
+  showThumbNails(int index) {
+    if (_imageUrls[index].runtimeType == String) {
+      return Image.network(
+        thumbnails[index],
+        fit: BoxFit.fitHeight,
+        width: 100,
+        errorBuilder: errorWidget,
+      );
+    } else {
+      List newImageUrls = thumbnails[index];
       return ImageSlideshow(
           indicatorColor: Colors.blue,
           autoPlayInterval: 3000,
           isLoop: true,
           children: newImageUrls!.map((image) {
             return Image.network(
-              image!,
+              image,
               fit: BoxFit.fitHeight,
               width: 100,
+              errorBuilder: errorWidget,
             );
           }).toList());
     }
   }
 
+  Widget errorWidget(context, error, stackTrace) {
+    return Text("no file");
+  }
+
   showDetails(int index) {
     return Dialog(
         child: SingleChildScrollView(
-            child: Column(children: [
-      showNetworkImages(index),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+      SizedBox(width: 400, height: 500, child: showPhotoView(index)),
       const SizedBox(
         height: 20,
       ),
