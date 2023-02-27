@@ -39,11 +39,13 @@ dependencies:
   firebase_core:
   firebase_storage:
   firebase_database:
+  cloud_firestore:
   image_picker_web:
   firebase_ui_auth: ^1.1.9
   flutter_image_slideshow: any
   image: ^4.0.15
   photo_view: ^0.14.0
+  firebase_ui_firestore: ^1.2.8
 
 dev_dependencies:
   flutter_test:

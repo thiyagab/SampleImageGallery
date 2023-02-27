@@ -1,4 +1,6 @@
 import 'dart:typed_data';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_ui_firestore/firebase_ui_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -11,27 +13,21 @@ import 'package:photo_view/photo_view_gallery.dart';
 class GalleryPage extends StatefulWidget {
   String uid;
 
-  GalleryPage(this.uid);
+  GalleryPage(this.uid, {super.key});
 
   @override
-  _GalleryPageState createState() => _GalleryPageState(this.uid);
+  GalleryPageState createState() => GalleryPageState();
 }
 
-class _GalleryPageState extends State<GalleryPage> {
-  final GlobalKey<ScaffoldState> _scaffoldKey = new GlobalKey<ScaffoldState>();
+class GalleryPageState extends State<GalleryPage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   List<Uint8List>? _localimages;
   String title = 'Image Gallery';
   String description = '';
-  final FirebaseDatabase _database = FirebaseDatabase.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
-  List _imageUrls = [];
-  List thumbnails = [];
-  List<String> descriptions = [];
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
   double? width;
   double? height;
-  String uid;
-
-  _GalleryPageState(this.uid);
 
   Future getImage(StateSetter bottomState) async {
     List<Uint8List>? images = await ImagePickerWeb.getMultiImagesAsBytes();
@@ -41,24 +37,52 @@ class _GalleryPageState extends State<GalleryPage> {
     });
   }
 
-  @override
-  void initState() {
-    super.initState();
+  Widget showEntries() {
+    var usersQuery = firestore
+        .collection('users')
+        .doc(widget.uid)
+        .collection('entries')
+        .orderBy('ts');
 
-    _database.ref().child(uid).onValue.listen((event) {
-      setState(() {
-        _imageUrls = [];
-        if (event.snapshot.value != null ||
-            event.snapshot.value.runtimeType == Map) {
-          Map<dynamic, dynamic> images = event.snapshot.value as Map;
-          images.forEach((key, value) {
-            _imageUrls.add(value["url"]);
-            thumbnails.add(value['thumbnail'] ?? value["url"]);
-            descriptions.add(value["description"]);
-          });
+    return FirestoreQueryBuilder<Map<String, dynamic>>(
+      query: usersQuery,
+      builder: (context, snapshot, _) {
+        if (snapshot.hasError) {
+          return Text("Failed to load objects ${snapshot.error}");
         }
-      });
-    });
+        return GridView.builder(
+          shrinkWrap: true,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: (width! > height! && width! > 600) ? 6 : 2,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1,
+          ),
+          itemBuilder: (context, index) {
+            // if we reached the end of the currently obtained items, we try to
+            // obtain more items
+            if (snapshot.hasMore && index + 1 == snapshot.docs.length) {
+              // Tell FirestoreQueryBuilder to try to obtain more items.
+              // It is safe to call this function from within the build method.
+              snapshot.fetchMore();
+            }
+            final entry = snapshot.docs[index].data();
+            entry['id']=snapshot.docs[index].id;
+            return InkWell(
+              onTap: () {
+                showDialog(
+                    context: context,
+                    builder: (_) => showDetails(context, entry));
+              },
+              child: showThumbNails((entry['thumbnail'].length > 0)
+                  ? entry['thumbnail']
+                  : entry['url']),
+            );
+          },
+          itemCount: snapshot.docs.length,
+        );
+      },
+    );
   }
 
   void _uploadImage() async {
@@ -71,7 +95,7 @@ class _GalleryPageState extends State<GalleryPage> {
     int count = 1;
     await Future.forEach(_localimages!.toList(), (Uint8List _image) async {
       String fileName = DateTime.now().millisecondsSinceEpoch.toString();
-      final fileRef = _storage.ref().child("$uid/$fileName");
+      final fileRef = _storage.ref().child("$widget.uid/$fileName");
       UploadTask uploadTask = fileRef.putData(_image!);
       await uploadTask.whenComplete(() => null);
       String imageUrl = await fileRef.getDownloadURL();
@@ -80,7 +104,8 @@ class _GalleryPageState extends State<GalleryPage> {
       // switch to blaze plan
       Uint8List thumbnail =
           Img.encodeJpg(Img.copyResize(Img.decodeImage(_image)!, width: 100));
-      final resizedfileRef = _storage.ref().child("$uid/$fileName" + "_tb");
+      final resizedfileRef =
+          _storage.ref().child("$widget.uid/$fileName" + "_tb");
       UploadTask resizeuploadTask = resizedfileRef.putData(thumbnail!);
       await resizeuploadTask.whenComplete(() => null);
       String thumbnailurl = await resizedfileRef.getDownloadURL();
@@ -91,17 +116,26 @@ class _GalleryPageState extends State<GalleryPage> {
       });
     });
 
-    _database.ref().child(uid).push().set({
-      "url": imageurls.length == 1 ? imageurls[0] : imageurls,
-      "thumbnail": thumbnails.length == 1 ? thumbnails[0] : thumbnails,
-      "description": description ?? '',
-    });
+    await updateEntry(description, thumbnails, imageurls);
 
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Text("Image(s) uploaded successfully"),
     ));
     setState(() {
       title = 'Image Gallery';
+    });
+  }
+
+  updateEntry(String description, List thumbnails, List urls) async {
+    await firestore
+        .collection('users')
+        .doc(widget.uid)
+        .collection('entries')
+        .add({
+      'description': description,
+      'thumbnail': thumbnails,
+      'url': urls,
+      'ts': DateTime.now().millisecondsSinceEpoch
     });
   }
 
@@ -119,32 +153,12 @@ class _GalleryPageState extends State<GalleryPage> {
           onPressed: () {
             showAddPicDialog(context);
           },
-          child: Text("+")),
+          child: const Text("+")),
     );
   }
 
   body() {
-    return Padding(
-        padding: EdgeInsets.all(30),
-        child: GridView.builder(
-          shrinkWrap: true,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: (width! > height! && width! > 600) ? 6 : 2,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1,
-          ),
-          itemBuilder: (context, index) {
-            return InkWell(
-              onTap: () {
-                showDialog(
-                    context: context, builder: (_) => showDetails(index));
-              },
-              child: showThumbNails(index),
-            );
-          },
-          itemCount: _imageUrls.length,
-        ));
+    return Padding(padding: EdgeInsets.all(30), child: showEntries());
   }
 
   showAddPicDialog(BuildContext context) {
@@ -160,10 +174,11 @@ class _GalleryPageState extends State<GalleryPage> {
                       _localimages == null || _localimages!.isEmpty
                           ? Container()
                           : showLocalImages(),
-                      SizedBox(height: 10),
+                      const SizedBox(height: 10),
                       TextField(
-                        minLines: 3,
-                        maxLines: 20,
+                        minLines: null,
+                        maxLines: null,
+                        keyboardType: TextInputType.multiline,
                         decoration: const InputDecoration(
                           labelText: "Description",
                         ),
@@ -180,7 +195,7 @@ class _GalleryPageState extends State<GalleryPage> {
                           getImage(setState);
                         },
                       ),
-                      SizedBox(height: 10),
+                      const SizedBox(height: 10),
                       ElevatedButton(
                         child: const Text("Upload Image"),
                         onPressed: () {
@@ -215,14 +230,14 @@ class _GalleryPageState extends State<GalleryPage> {
     }
   }
 
-  showPhotoView(int index) {
-    if (_imageUrls[index].runtimeType == String) {
+  showPhotoView(List urls) {
+    if (urls.length == 1) {
       return PhotoView(
         backgroundDecoration: const BoxDecoration(color: Colors.white70),
-        imageProvider: NetworkImage(_imageUrls[index]),
+        imageProvider: NetworkImage(urls[0]),
       );
     } else {
-      List newImageUrls = _imageUrls[index];
+      List newImageUrls = urls;
       return PhotoViewGallery.builder(
           scrollPhysics: const BouncingScrollPhysics(),
           itemCount: newImageUrls.length,
@@ -239,16 +254,16 @@ class _GalleryPageState extends State<GalleryPage> {
     }
   }
 
-  showThumbNails(int index) {
-    if (_imageUrls[index].runtimeType == String) {
+  showThumbNails(List urls) {
+    if (urls.length == 1) {
       return Image.network(
-        thumbnails[index],
+        urls[0],
         fit: BoxFit.fitHeight,
         width: 100,
         errorBuilder: errorWidget,
       );
     } else {
-      List newImageUrls = thumbnails[index];
+      List newImageUrls = urls;
       return ImageSlideshow(
           indicatorColor: Colors.blue,
           autoPlayInterval: 3000,
@@ -268,18 +283,68 @@ class _GalleryPageState extends State<GalleryPage> {
     return Text("no file");
   }
 
-  showDetails(int index) {
-    return Dialog(
-        child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-      SizedBox(width: 400, height: 500, child: showPhotoView(index)),
-      const SizedBox(
-        height: 20,
-      ),
-      Text(descriptions[index]),
-      const SizedBox(
-        height: 10,
-      )
-    ])));
+  showDetails(BuildContext context, Map<String, dynamic> entry) {
+    bool readMode = true;
+    String text=entry['description'];
+    TextEditingController controller= TextEditingController(text:text);
+    return StatefulBuilder(builder: (context, setState) {
+      return Dialog(
+          child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Visibility(
+            visible: readMode,
+            child: SizedBox(
+            width: width! * 0.7,
+            height: height! * 0.5,
+            child: showPhotoView(entry['url']))),
+        const SizedBox(
+          height: 20,
+        ),
+        Padding(
+            padding: const EdgeInsets.all(10),
+            child: TextField(
+              minLines: null,
+              maxLines: null,
+              keyboardType: TextInputType.multiline,
+
+              controller: controller,
+              readOnly: readMode,
+            )),
+        const SizedBox(
+          height: 5,
+        ),
+        ButtonBar(children:[
+        TextButton(
+            onPressed: () {
+              if(!readMode){
+                //Update clicked
+                 firestore
+                    .collection('users')
+                    .doc(widget.uid)
+                    .collection('entries').doc(entry['id']).update({'description':controller.text,'olddescription':entry['description']});
+
+              }
+              setState(() {
+                readMode = !readMode;
+              });
+
+            },
+            child: Text(readMode ? 'Edit' : 'Update')),
+          Visibility(visible: !readMode,
+              child:
+          TextButton(
+                onPressed: () {
+                  setState(() {
+                    readMode=!readMode;
+                    controller.text=entry['description'];
+                  });
+                },
+                child: const Text('Reset')))]
+        ),
+        const SizedBox(
+          height: 5,
+        ),
+      ])));
+    });
   }
 }
